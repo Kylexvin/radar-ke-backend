@@ -93,9 +93,7 @@ app.use(errorHandler);
 const PORT = config.port;
 const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📡 Environment: ${config.nodeEnv}`);
-  console.log(`🔗 API URL: http://localhost:${PORT}`);
-  console.log(`🏥 Health check: http://localhost:${PORT}/health`);
+ 
 });
 
 // Handle unhandled promise rejections
