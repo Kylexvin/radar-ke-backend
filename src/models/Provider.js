@@ -1,87 +1,57 @@
 import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
 
 const providerSchema = new mongoose.Schema({
+  // Link to User account (for authentication)
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true
+  },
+  // Provider profile fields
   name: {
     type: String,
-    required: [true, 'Provider name is required'],
+    required: true,
     trim: true
   },
   phone: {
     type: String,
-    required: [true, 'Phone number is required'],
-    trim: true
+    required: true
   },
   whatsapp: {
-    type: String,
-    trim: true
-  },
-  email: {
-    type: String,
-    lowercase: true,
-    trim: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
-    // REMOVED: sparse: true
-  },
-  password: {
-    type: String,
-    required: function() {
-      return this.authProvider === 'local';
-    },
-    minlength: [6, 'Password must be at least 6 characters'],
-    select: false
-  },
-  googleId: {
     type: String
-    // REMOVED: sparse: true
-  },
-  authProvider: {
-    type: String,
-    enum: ['local', 'google'],
-    default: 'local'
   },
   category: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category',
-    required: [true, 'Category is required']
+    type: String,
+    required: true,
+    enum: ['fundi', 'food', 'bodaboda', 'salon', 'tutor', 'delivery', 'health']
   },
   description: {
     type: String,
-    maxlength: [500, 'Description cannot exceed 500 characters']
+    maxlength: 500
   },
-  profileImage: {
-    type: String,
-    trim: true
-  },
+  profileImage: String,
   location: {
     type: {
       type: String,
       enum: ['Point'],
-      default: 'Point',
-      required: true
+      default: 'Point'
     },
     coordinates: {
       type: [Number],
-      required: [true, 'Location coordinates are required'],
-      validate: {
-        validator: function(coords) {
-          return coords.length === 2 && 
-                 coords[0] >= -180 && coords[0] <= 180 && 
-                 coords[1] >= -90 && coords[1] <= 90;
-        },
-        message: 'Coordinates must be [longitude, latitude] within valid ranges'
-      }
+      required: true
     }
   },
+  locationAddress: String,
   radiusKm: {
     type: Number,
     default: 5,
-    min: [1, 'Radius cannot be less than 1km'],
-    max: [50, 'Radius cannot exceed 50km']
+    min: 1,
+    max: 50
   },
   isActive: {
     type: Boolean,
-    default: true
+    default: false
   },
   isVerified: {
     type: Boolean,
@@ -95,47 +65,35 @@ const providerSchema = new mongoose.Schema({
   },
   totalRatings: {
     type: Number,
-    default: 0,
-    min: 0
+    default: 0
   },
-  scanImpressions: {
+  totalScans: {
     type: Number,
-    default: 0,
-    min: 0
-  }
+    default: 0
+  },
+  totalContacts: {
+    type: Number,
+    default: 0
+  },
+  priceRange: {
+    type: String,
+    enum: ['low', 'medium', 'high'],
+    default: 'medium'
+  },
+  experience: {
+    type: Number,
+    default: 0
+  },
+  tags: [String]
 }, {
   timestamps: true
 });
 
-// ALL indexes defined ONLY here
+// Indexes
 providerSchema.index({ location: '2dsphere' });
+providerSchema.index({ userId: 1 });
 providerSchema.index({ category: 1, isActive: 1, rating: -1 });
-providerSchema.index({ radiusKm: 1 });
-providerSchema.index({ phone: 1 }, { unique: true });
-providerSchema.index({ email: 1 }, { unique: true, sparse: true });
-providerSchema.index({ googleId: 1 }, { unique: true, sparse: true });
-
-providerSchema.pre('save', async function(next) {
-  if (!this.isModified('password') || this.authProvider !== 'local' || !this.password) {
-    return next();
-  }
-  
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-providerSchema.methods.comparePassword = async function(candidatePassword) {
-  if (this.authProvider !== 'local' || !this.password) {
-    return false;
-  }
-  return await bcrypt.compare(candidatePassword, this.password);
-};
+providerSchema.index({ isVerified: -1, rating: -1 });
 
 const Provider = mongoose.model('Provider', providerSchema);
-
 export default Provider;

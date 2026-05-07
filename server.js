@@ -12,6 +12,7 @@ import { HTTP_STATUS, RATE_LIMIT } from './src/utils/constants.js';
 
 // Import routes
 import authRoutes from './src/routes/auth.routes.js';
+import providerRoutes from './src/routes/provider.routes.js'; 
 
 // Initialize express app
 const app = express();
@@ -68,6 +69,8 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/providers', providerRoutes);
+
 
 // Root endpoint
 app.get('/', (req, res) => {
