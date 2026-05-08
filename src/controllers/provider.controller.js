@@ -1,7 +1,90 @@
-import  Provider from '../models/Provider.js';
+import Provider from '../models/Provider.js';
 import { findNearbyProviders, updateProviderLocation } from '../services/geo.service.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { HTTP_STATUS } from '../utils/constants.js';
+
+/**
+ * Onboard existing user as a provider (like Google My Business)
+ * POST /api/providers/onboard
+ */
+export const onboardAsProvider = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+
+    const existingProvider = await Provider.findOne({ userId });
+    if (existingProvider) {
+      return errorResponse(res, 'You are already a provider', HTTP_STATUS.CONFLICT);
+    }
+
+    const {
+      businessName,
+      phone,
+      whatsapp,
+      categoryId,        // Now expecting ObjectId
+      description,
+      locationLng,
+      locationLat,
+      locationAddress,
+      radiusKm
+    } = req.body;
+
+    if (!businessName || !phone || !categoryId || !locationLng || !locationLat) {
+      return errorResponse(res, 'Missing required fields: businessName, phone, categoryId, location', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    // Validate category exists
+    const category = await Category.findOne({ 
+      _id: categoryId,
+      isActive: true 
+    });
+    
+    if (!category) {
+      return errorResponse(res, 'Invalid category', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    const provider = new Provider({
+      userId,
+      name: businessName,
+      phone,
+      whatsapp: whatsapp || phone,
+      categoryId: category._id,
+      description: description || '',
+      profileImage: req.file?.path || null,
+      location: {
+        type: 'Point',
+        coordinates: [parseFloat(locationLng), parseFloat(locationLat)]
+      },
+      locationAddress: locationAddress || '',
+      radiusKm: radiusKm || 5,
+      isActive: true,
+      isVerified: false,
+      totalScans: 0,
+      totalContacts: 0
+    });
+
+    await provider.save();
+
+    // Populate category for response
+    await provider.populate('categoryId', 'name slug iconName color');
+
+    return successResponse(res, {
+      message: 'Provider profile created successfully',
+      provider: {
+        id: provider._id,
+        businessName: provider.name,
+        category: provider.categoryId.name,
+        categorySlug: provider.categoryId.slug,
+        iconName: provider.categoryId.iconName,
+        color: provider.categoryId.color,
+        isActive: provider.isActive,
+        isVerified: provider.isVerified,
+        radiusKm: provider.radiusKm
+      }
+    }, HTTP_STATUS.CREATED);
+  } catch (error) {
+    next(error);
+  }
+};
 
 /**
  * Get provider profile by ID (public)
@@ -11,16 +94,18 @@ export const getProvider = async (req, res, next) => {
   try {
     const { id } = req.params;
     
-    const provider = await Provider.findById(id)
-      .populate('categoryId', 'name color');
+    const provider = await Provider.findById(id);
 
     if (!provider) {
       return errorResponse(res, 'Provider not found', HTTP_STATUS.NOT_FOUND);
     }
 
+    // Check if the requesting user owns this provider profile
+    const isOwner = req.user && provider.userId.toString() === req.user._id.toString();
+
     successResponse(res, {
       provider,
-      isOwner: req.provider && req.provider._id.toString() === id
+      isOwner
     });
   } catch (error) {
     next(error);
@@ -28,17 +113,17 @@ export const getProvider = async (req, res, next) => {
 };
 
 /**
- * Get current provider's own profile (requires provider auth)
+ * Get current user's provider profile
  * GET /api/providers/me
  */
 export const getMyProviderProfile = async (req, res, next) => {
   try {
-    // req.provider is attached by authenticate middleware
-    const provider = await Provider.findById(req.provider._id)
-      .populate('categoryId', 'name color');
+    const userId = req.user._id;
+    
+    const provider = await Provider.findOne({ userId });
 
     if (!provider) {
-      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+      return errorResponse(res, 'You are not a provider yet. Onboard first.', HTTP_STATUS.NOT_FOUND);
     }
 
     successResponse(res, { provider });
@@ -48,29 +133,31 @@ export const getMyProviderProfile = async (req, res, next) => {
 };
 
 /**
- * Update provider profile (requires provider auth)
+ * Update provider profile
  * PUT /api/providers/me
  */
 export const updateProvider = async (req, res, next) => {
   try {
-    const updates = req.body;
-    const allowedUpdates = [
-      'name', 'phone', 'whatsapp', 'description', 
-      'radiusKm', 'priceRange', 'experience', 'tags'
-    ];
+    const userId = req.user._id;
     
-    const filteredUpdates = {};
+    const allowedUpdates = ['name', 'phone', 'whatsapp', 'description', 'radiusKm', 'priceRange', 'experience', 'tags'];
+    const updates = {};
+    
     for (const key of allowedUpdates) {
-      if (updates[key] !== undefined) {
-        filteredUpdates[key] = updates[key];
+      if (req.body[key] !== undefined) {
+        updates[key] = req.body[key];
       }
     }
 
-    const provider = await Provider.findByIdAndUpdate(
-      req.provider._id,
-      filteredUpdates,
+    const provider = await Provider.findOneAndUpdate(
+      { userId },
+      updates,
       { new: true, runValidators: true }
     );
+
+    if (!provider) {
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+    }
 
     successResponse(res, {
       message: 'Provider profile updated successfully',
@@ -82,22 +169,24 @@ export const updateProvider = async (req, res, next) => {
 };
 
 /**
- * Toggle provider availability (requires provider auth)
+ * Toggle provider availability
  * PATCH /api/providers/me/toggle
  */
 export const toggleAvailability = async (req, res, next) => {
   try {
-    const provider = await Provider.findById(req.provider._id);
+    const userId = req.user._id;
+    
+    const provider = await Provider.findOne({ userId });
     
     if (!provider) {
-      return errorResponse(res, 'Provider not found', HTTP_STATUS.NOT_FOUND);
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
     }
 
     provider.isActive = !provider.isActive;
     await provider.save();
 
     successResponse(res, {
-      message: `Provider is now ${provider.isActive ? 'active' : 'inactive'}`,
+      message: provider.isActive ? 'You are now accepting jobs' : 'You are now offline',
       isActive: provider.isActive
     });
   } catch (error) {
@@ -106,23 +195,30 @@ export const toggleAvailability = async (req, res, next) => {
 };
 
 /**
- * Update provider location (requires provider auth)
+ * Update provider location
  * PATCH /api/providers/me/location
  */
 export const updateLocation = async (req, res, next) => {
   try {
+    const userId = req.user._id;
     const { lng, lat, address } = req.body;
 
     if (lng === undefined || lat === undefined) {
       return errorResponse(res, 'Longitude and latitude are required', HTTP_STATUS.BAD_REQUEST);
     }
 
-    const provider = await updateProviderLocation(
-      req.provider._id,
-      parseFloat(lng),
-      parseFloat(lat),
-      address || 'Updated location'
-    );
+    const provider = await Provider.findOne({ userId });
+    
+    if (!provider) {
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    provider.location = {
+      type: 'Point',
+      coordinates: [parseFloat(lng), parseFloat(lat)]
+    };
+    provider.locationAddress = address || provider.locationAddress;
+    await provider.save();
 
     successResponse(res, {
       message: 'Location updated successfully',
@@ -134,83 +230,31 @@ export const updateLocation = async (req, res, next) => {
   }
 };
 
-/**
- * Scan for nearby providers (user action - requires user auth OR optional)
- * GET /api/providers/scan
- */
-export const scanProviders = async (req, res, next) => {
-  try {
-    const {
-      lng,
-      lat,
-      category,
-      radiusKm = 5,
-      limit = 50
-    } = req.query;
-
-    if (!lng || !lat || !category) {
-      return errorResponse(res, 'Location (lng, lat) and category are required', HTTP_STATUS.BAD_REQUEST);
-    }
-
-    // Validate category
-    const validCategories = ['fundi', 'food', 'bodaboda', 'salon', 'tutor', 'delivery', 'health'];
-    if (!validCategories.includes(category)) {
-      return errorResponse(res, 'Invalid category', HTTP_STATUS.BAD_REQUEST);
-    }
-
-    // Find nearby providers using dual radius logic
-    const providers = await findNearbyProviders({
-      userLng: parseFloat(lng),
-      userLat: parseFloat(lat),
-      searchRadiusKm: parseFloat(radiusKm),
-      category,
-      limit: parseInt(limit)
-    });
-
-    // Log scan for analytics (if user is authenticated)
-    if (req.user) {
-      // Increment scan counts
-      const providerIds = providers.map(p => p._id);
-      await Provider.updateMany(
-        { _id: { $in: providerIds } },
-        { $inc: { totalScans: 1 } }
-      );
-    }
-
-    successResponse(res, {
-      meta: {
-        scanLocation: { lng, lat },
-        radiusKm: parseFloat(radiusKm),
-        category,
-        totalResults: providers.length
-      },
-      providers
-    });
-  } catch (error) {
-    next(error);
-  }
-};
 
 /**
- * Get provider analytics (requires provider auth)
+ * Get provider analytics
  * GET /api/providers/me/analytics
  */
 export const getProviderAnalytics = async (req, res, next) => {
   try {
-    const provider = await Provider.findById(req.provider._id);
+    const userId = req.user._id;
+    const provider = await Provider.findOne({ userId });
+
+    if (!provider) {
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+    }
 
     const analytics = {
       totalScans: provider.totalScans || 0,
       totalContacts: provider.totalContacts || 0,
       rating: provider.rating || 0,
       isVerified: provider.isVerified,
-      conversionRate: provider.totalContacts > 0 
+      conversionRate: provider.totalScans > 0 
         ? ((provider.totalContacts / provider.totalScans) * 100).toFixed(1)
         : 0,
       recommendations: []
     };
 
-    // Add recommendations
     if (analytics.totalScans < 10) {
       analytics.recommendations.push('Complete your profile to appear in more scans');
     }

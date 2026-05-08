@@ -48,7 +48,7 @@ export const registerUser = async (req, res, next) => {
     // Create user - name defaults to username
     const user = new User({
       username,
-      name: username,  // Auto-use username as name
+      name: username,
       email,
       password,
       authProvider: 'local',
@@ -80,6 +80,7 @@ export const registerUser = async (req, res, next) => {
 /**
  * Register a new service provider
  * POST /api/auth/register/provider
+ * @deprecated - Use /api/providers/onboard instead
  */
 export const registerProvider = async (req, res, next) => {
   try {
@@ -172,11 +173,6 @@ export const registerProvider = async (req, res, next) => {
   }
 };
 
-
-/**
- * Login user with email/username + password
- * POST /api/auth/login
- */
 /**
  * Login user with usernameOrEmail + password
  * POST /api/auth/login
@@ -196,12 +192,12 @@ export const login = async (req, res, next) => {
     if (!role || role === 'user') {
       const query = isEmail 
         ? { email: usernameOrEmail.toLowerCase() }
-        : { username: usernameOrEmail }; // Don't lowercase username
+        : { username: usernameOrEmail };
       
-      console.log('Query:', query); // Debug log
+      console.log('Query:', query);
       
       user = await User.findOne(query).select('+password');
-      console.log('Found user:', user ? user.username : 'null'); // Debug log
+      console.log('Found user:', user ? user.username : 'null');
       
       if (user) {
         userType = 'user';
@@ -244,6 +240,9 @@ export const login = async (req, res, next) => {
       accessToken = generateAccessToken({ userId: user._id });
       refreshToken = generateRefreshToken({ userId: user._id });
       
+      // Check if this user has a provider profile (onboarded as provider)
+      const providerProfile = await Provider.findOne({ userId: user._id });
+      
       responseData = {
         userType: 'user',
         user: {
@@ -253,6 +252,14 @@ export const login = async (req, res, next) => {
           email: user.email,
           searchRadiusKm: user.searchRadiusKm
         },
+        hasProviderProfile: !!providerProfile,  // true if provider record exists
+        providerProfile: providerProfile ? {
+          id: providerProfile._id,
+          businessName: providerProfile.name,
+          category: providerProfile.category,
+          isActive: providerProfile.isActive,
+          isVerified: providerProfile.isVerified
+        } : null,
         tokens: {
           accessToken,
           refreshToken,
@@ -287,6 +294,7 @@ export const login = async (req, res, next) => {
     next(error);
   }
 };
+
 /**
  * Register/Login with Google
  * POST /api/auth/google
@@ -307,31 +315,27 @@ export const googleAuth = async (req, res, next) => {
           googleId,
           email,
           name,
-          phone: phone, // Required for providers
+          phone: phone,
           authProvider: 'google',
-          isVerified: true, // Google emails are verified
-          // Default values that will need to be completed later
-          category: null, // Will need to be set in profile completion
+          isVerified: true,
+          category: null,
           location: {
             type: 'Point',
-            coordinates: [NAIROBI_CENTER.lng, NAIROBI_CENTER.lat] // Nairobi CBD default
+            coordinates: [NAIROBI_CENTER.lng, NAIROBI_CENTER.lat]
           },
           radiusKm: 5,
           isActive: true
         });
         await provider.save();
       } else if (!provider.googleId) {
-        // Existing local auth provider is now using Google
         provider.googleId = googleId;
         provider.authProvider = 'google';
         await provider.save();
       }
 
-      // Generate tokens
       const accessToken = generateAccessToken({ providerId: provider._id });
       const refreshToken = generateRefreshToken({ providerId: provider._id });
 
-      // Check if profile is complete
       const isProfileComplete = !!(provider.category && 
                                    provider.location && 
                                    provider.location.coordinates);
@@ -359,36 +363,35 @@ export const googleAuth = async (req, res, next) => {
     } 
     
     else if (role === 'user') {
-      // Handle user Google auth
       let user = await User.findOne({ 
         $or: [{ googleId }, { email }] 
       });
 
       if (!user) {
-        // Create new user with Google auth
         user = new User({
           googleId,
           email,
           name,
-          phone: phone || '', // Optional for users initially
+          phone: phone || '',
           authProvider: 'google',
           searchRadiusKm: 5,
           lastLocation: {
             type: 'Point',
-            coordinates: [NAIROBI_CENTER.lng, NAIROBI_CENTER.lat] // Nairobi CBD default
+            coordinates: [NAIROBI_CENTER.lng, NAIROBI_CENTER.lat]
           }
         });
         await user.save();
       } else if (!user.googleId) {
-        // Existing local auth user is now using Google
         user.googleId = googleId;
         user.authProvider = 'google';
         await user.save();
       }
 
-      // Generate tokens
       const accessToken = generateAccessToken({ userId: user._id });
       const refreshToken = generateRefreshToken({ userId: user._id });
+
+      // Check if this user has a provider profile
+      const providerProfile = await Provider.findOne({ userId: user._id });
 
       return successResponse(res, {
         userType: 'user',
@@ -399,6 +402,14 @@ export const googleAuth = async (req, res, next) => {
           phone: user.phone,
           searchRadiusKm: user.searchRadiusKm
         },
+        hasProviderProfile: !!providerProfile,
+        providerProfile: providerProfile ? {
+          id: providerProfile._id,
+          businessName: providerProfile.name,
+          category: providerProfile.category,
+          isActive: providerProfile.isActive,
+          isVerified: providerProfile.isVerified
+        } : null,
         tokens: { 
           accessToken, 
           refreshToken, 
@@ -427,7 +438,6 @@ export const refreshToken = async (req, res, next) => {
       return errorResponse(res, 'Refresh token required', HTTP_STATUS.BAD_REQUEST);
     }
 
-    // Verify refresh token
     let decoded;
     try {
       decoded = jwt.verify(refreshTokenValue, process.env.JWT_REFRESH_SECRET);
@@ -438,7 +448,6 @@ export const refreshToken = async (req, res, next) => {
       return errorResponse(res, 'Invalid refresh token', HTTP_STATUS.UNAUTHORIZED);
     }
 
-    // Check if it's a user or provider token and verify they still exist
     let newAccessToken;
     let userType;
 
@@ -476,8 +485,6 @@ export const refreshToken = async (req, res, next) => {
  */
 export const logout = async (req, res, next) => {
   try {
-    // In a stateless JWT system, logout is handled client-side
-    // This endpoint exists for completeness
     return successResponse(res, null, 'Logged out successfully');
   } catch (error) {
     next(error);

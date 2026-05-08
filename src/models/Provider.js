@@ -21,11 +21,11 @@ const providerSchema = new mongoose.Schema({
   whatsapp: {
     type: String
   },
-  category: {
-    type: String,
-    required: true,
-    enum: ['fundi', 'food', 'bodaboda', 'salon', 'tutor', 'delivery', 'health']
-  },
+category: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Category',
+  required: true
+},
   description: {
     type: String,
     maxlength: 500
