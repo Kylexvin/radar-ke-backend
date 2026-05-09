@@ -1,7 +1,9 @@
 import Category from '../models/Category.js';
 import Provider from '../models/Provider.js';
+import { findNearbyProviders } from '../services/geo.service.js';  // ADD THIS IMPORT
 import { successResponse, errorResponse } from '../utils/response.js';
 import { HTTP_STATUS } from '../utils/constants.js';
+
 
 /**
  * Get category presence (which categories have providers nearby)
@@ -22,10 +24,10 @@ export const getCategoryPresence = async (req, res, next) => {
       return errorResponse(res, 'No categories found', HTTP_STATUS.NOT_FOUND);
     }
 
-    // For each category, count active providers nearby
+    // For each category, count active providers nearby using categoryId
     const presence = await Promise.all(categories.map(async (category) => {
       const count = await Provider.countDocuments({
-        category: category.slug,
+        categoryId: category._id,  // FIXED: Use ObjectId, not string slug
         isActive: true,
         location: {
           $geoWithin: {
@@ -68,35 +70,35 @@ export const getCategoryPresence = async (req, res, next) => {
  * Scan for nearby providers (public)
  * GET /api/providers/scan
  */
+/**
+ * Scan for providers nearby
+ * GET /api/scan/providers
+ */
 export const scanProviders = async (req, res, next) => {
   try {
-    const {
-      lng,
-      lat,
-      category,
-      radiusKm = 5,
-      limit = 50
-    } = req.query;
+    const { lng, lat, category, radiusKm = 5, limit = 50 } = req.query;
 
     if (!lng || !lat || !category) {
       return errorResponse(res, 'Location (lng, lat) and category are required', HTTP_STATUS.BAD_REQUEST);
     }
 
-    const validCategories = ['fundi', 'food', 'bodaboda', 'salon', 'tutor', 'delivery', 'health'];
-    if (!validCategories.includes(category)) {
+    // Validate category exists
+    const validCategory = await Category.findOne({ slug: category, isActive: true });
+    if (!validCategory) {
       return errorResponse(res, 'Invalid category', HTTP_STATUS.BAD_REQUEST);
     }
 
+    // Find nearby providers using geo service
     const providers = await findNearbyProviders({
       userLng: parseFloat(lng),
       userLat: parseFloat(lat),
       searchRadiusKm: parseFloat(radiusKm),
-      category,
+      categorySlug: category,  // Pass the slug
       limit: parseInt(limit)
     });
 
-    // Increment scan counts for analytics (if user is logged in)
-    if (req.user && providers.length > 0) {
+    // Increment scan counts for analytics
+    if (providers.length > 0) {
       const providerIds = providers.map(p => p._id);
       await Provider.updateMany(
         { _id: { $in: providerIds } },
@@ -106,12 +108,24 @@ export const scanProviders = async (req, res, next) => {
 
     successResponse(res, {
       meta: {
-        scanLocation: { lng, lat },
+        scanLocation: { lng: parseFloat(lng), lat: parseFloat(lat) },
         radiusKm: parseFloat(radiusKm),
-        category,
+        category: category,
         totalResults: providers.length
       },
-      providers
+      providers: providers.map(p => ({
+        id: p._id,
+        name: p.name,
+        phone: p.phone,
+        whatsapp: p.whatsapp,
+        description: p.description,
+        location: p.location,
+        locationAddress: p.locationAddress,
+        distance: p.distance,
+        rating: p.rating,
+        isVerified: p.isVerified,
+        category: p.category
+      }))
     });
   } catch (error) {
     next(error);

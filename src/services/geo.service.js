@@ -1,4 +1,5 @@
 import Provider from '../models/Provider.js';
+import Category from '../models/Category.js';
 
 /**
  * Find providers within both user's search radius AND provider's service radius
@@ -8,9 +9,13 @@ export const findNearbyProviders = async ({
   userLng,
   userLat,
   searchRadiusKm,
-  category,
+  categorySlug,
   limit = 50
 }) => {
+  // First get category ID from slug
+  const category = await Category.findOne({ slug: categorySlug, isActive: true });
+  if (!category) return [];
+
   const pipeline = [
     {
       $geoNear: {
@@ -19,7 +24,7 @@ export const findNearbyProviders = async ({
           coordinates: [parseFloat(userLng), parseFloat(userLat)]
         },
         distanceField: 'distance',
-        distanceMultiplier: 0.001, // Convert meters to km
+        distanceMultiplier: 0.001,
         spherical: true,
         key: 'location'
       }
@@ -27,15 +32,15 @@ export const findNearbyProviders = async ({
     {
       $match: {
         isActive: true,
-        category: category
+        categoryId: category._id
       }
     },
     {
       $match: {
         $expr: {
           $and: [
-            { $lte: ['$distance', searchRadiusKm] }, // Within user's radius
-            { $lte: ['$distance', '$radiusKm'] }     // Within provider's radius
+            { $lte: ['$distance', searchRadiusKm] },
+            { $lte: ['$distance', '$radiusKm'] }
           ]
         }
       }
@@ -49,6 +54,20 @@ export const findNearbyProviders = async ({
     },
     {
       $limit: limit
+    },
+    {
+      $lookup: {
+        from: 'categories',
+        localField: 'categoryId',
+        foreignField: '_id',
+        as: 'categoryInfo'
+      }
+    },
+    {
+      $unwind: {
+        path: '$categoryInfo',
+        preserveNullAndEmptyArrays: true
+      }
     }
   ];
 

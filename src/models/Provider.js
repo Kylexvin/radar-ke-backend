@@ -1,14 +1,12 @@
 import mongoose from 'mongoose';
 
 const providerSchema = new mongoose.Schema({
-  // Link to User account (for authentication)
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
     unique: true
   },
-  // Provider profile fields
   name: {
     type: String,
     required: true,
@@ -16,16 +14,22 @@ const providerSchema = new mongoose.Schema({
   },
   phone: {
     type: String,
+    required: true,
+    unique: true
+  },
+  whatsapp: String,
+  email: {
+    type: String,
+    sparse: true,
+    lowercase: true
+  },
+  // NO password field - providers use User account for authentication
+  // NO googleId, NO authProvider - those belong to User
+  categoryId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
     required: true
   },
-  whatsapp: {
-    type: String
-  },
-category: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'Category',
-  required: true
-},
   description: {
     type: String,
     maxlength: 500
@@ -51,7 +55,7 @@ category: {
   },
   isActive: {
     type: Boolean,
-    default: false
+    default: true
   },
   isVerified: {
     type: Boolean,
@@ -59,9 +63,7 @@ category: {
   },
   rating: {
     type: Number,
-    default: 0,
-    min: 0,
-    max: 5
+    default: 0
   },
   totalRatings: {
     type: Number,
@@ -80,10 +82,7 @@ category: {
     enum: ['low', 'medium', 'high'],
     default: 'medium'
   },
-  experience: {
-    type: Number,
-    default: 0
-  },
+  experience: Number,
   tags: [String]
 }, {
   timestamps: true
@@ -91,9 +90,10 @@ category: {
 
 // Indexes
 providerSchema.index({ location: '2dsphere' });
+providerSchema.index({ phone: 1 });
+providerSchema.index({ email: 1 }, { sparse: true });
+providerSchema.index({ categoryId: 1, isActive: 1, rating: -1 });
 providerSchema.index({ userId: 1 });
-providerSchema.index({ category: 1, isActive: 1, rating: -1 });
-providerSchema.index({ isVerified: -1, rating: -1 });
 
 const Provider = mongoose.model('Provider', providerSchema);
 export default Provider;

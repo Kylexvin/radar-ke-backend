@@ -480,6 +480,64 @@ export const refreshToken = async (req, res, next) => {
 };
 
 /**
+ * Get current user/profile info
+ * GET /api/auth/me
+ */
+/**
+ * Get current user/profile info
+ * GET /api/auth/me
+ */
+export const getMe = async (req, res, next) => {
+  try {
+    let userId;
+    
+    // Get userId from either user or provider token
+    if (req.user) {
+      userId = req.user._id;
+    } else if (req.provider) {
+      // If it's a provider token, find the user linked to this provider
+      const provider = await Provider.findById(req.provider._id);
+      if (!provider) {
+        return errorResponse(res, 'Provider not found', HTTP_STATUS.NOT_FOUND);
+      }
+      userId = provider.userId;
+    } else {
+      return errorResponse(res, 'Not authenticated', HTTP_STATUS.UNAUTHORIZED);
+    }
+    
+    const user = await User.findById(userId).select('-password');
+    if (!user) {
+      return errorResponse(res, 'User not found', HTTP_STATUS.NOT_FOUND);
+    }
+    
+    const providerProfile = await Provider.findOne({ userId }).populate('categoryId', 'name slug iconName color');
+    
+    successResponse(res, {
+      user: {
+        id: user._id,
+        username: user.username,
+        name: user.name,
+        email: user.email,
+        searchRadiusKm: user.searchRadiusKm
+      },
+      hasProviderProfile: !!providerProfile,
+      providerProfile: providerProfile ? {
+        id: providerProfile._id,
+        businessName: providerProfile.name,
+        category: providerProfile.categoryId?.name,
+        categorySlug: providerProfile.categoryId?.slug,
+        iconName: providerProfile.categoryId?.iconName,
+        color: providerProfile.categoryId?.color,
+        isActive: providerProfile.isActive,
+        isVerified: providerProfile.isVerified,
+        radiusKm: providerProfile.radiusKm
+      } : null
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+/**
  * Logout (client-side token discard)
  * POST /api/auth/logout
  */

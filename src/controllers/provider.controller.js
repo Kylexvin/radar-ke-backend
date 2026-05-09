@@ -1,5 +1,6 @@
 import Provider from '../models/Provider.js';
 import { findNearbyProviders, updateProviderLocation } from '../services/geo.service.js';
+import Category from '../models/Category.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { HTTP_STATUS } from '../utils/constants.js';
 
@@ -11,6 +12,7 @@ export const onboardAsProvider = async (req, res, next) => {
   try {
     const userId = req.user._id;
 
+    // Check if user already has a provider profile
     const existingProvider = await Provider.findOne({ userId });
     if (existingProvider) {
       return errorResponse(res, 'You are already a provider', HTTP_STATUS.CONFLICT);
@@ -33,11 +35,7 @@ export const onboardAsProvider = async (req, res, next) => {
     }
 
     // Validate category exists
-    const category = await Category.findOne({ 
-      _id: categoryId,
-      isActive: true 
-    });
-    
+    const category = await Category.findById(categoryId);
     if (!category) {
       return errorResponse(res, 'Invalid category', HTTP_STATUS.BAD_REQUEST);
     }

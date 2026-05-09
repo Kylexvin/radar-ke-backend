@@ -1,7 +1,7 @@
 import express from 'express';
 import {
   registerUser,
-  registerProvider,
+  getMe,
   login,
   googleAuth,
   refreshToken,
@@ -40,53 +40,16 @@ router.post('/register/user',
   asyncHandler(registerUser)
 );
 
+router.get('/me',  getMe);
+
+
 // Login route
 router.post('/login',
   validateRequired(['usernameOrEmail', 'password']),
   asyncHandler(login)
 );
 
-/**
- * @route   POST /api/auth/register/provider
- * @desc    Register a new service provider (local auth - email/password)
- * @access  Public
- */
-router.post('/register/provider',
-  validateSchema({
-    name: { required: true, type: 'string', minLength: 2, maxLength: 100 },
-    phone: { 
-      required: true, 
-      type: 'string', 
-      validate: validators.isPhone 
-    },
-    whatsapp: { 
-      required: false, 
-      type: 'string', 
-      validate: validators.isPhone 
-    },
-    email: { 
-      required: false, 
-      type: 'string', 
-      validate: validators.isEmail 
-    },
-    password: { required: true, type: 'string', minLength: 6 },
-    category: { required: true, type: 'string' },
-    description: { required: false, type: 'string', maxLength: 500 },
-    profileImage: { required: false, type: 'string' },
-    location: { 
-      required: true, 
-      type: 'object',
-      validate: (value) => {
-        if (!value.coordinates || !Array.isArray(value.coordinates) || value.coordinates.length !== 2) {
-          return 'Location must have coordinates array [lng, lat]';
-        }
-        return validators.isCoordinate(value.coordinates);
-      }
-    },
-    radiusKm: { required: false, type: 'number', min: 1, max: 50 }
-  }),
-  asyncHandler(registerProvider)
-);
+
 
 
 
