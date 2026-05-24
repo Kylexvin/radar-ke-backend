@@ -185,34 +185,24 @@ export const login = async (req, res, next) => {
     let provider = null;
     let userType = null;
 
-    // Check if usernameOrEmail is email or username
     const isEmail = usernameOrEmail.includes('@');
 
-    // Find user by email OR username
     if (!role || role === 'user') {
-      const query = isEmail 
+      const query = isEmail
         ? { email: usernameOrEmail.toLowerCase() }
         : { username: usernameOrEmail };
-      
-      console.log('Query:', query);
-      
+
       user = await User.findOne(query).select('+password');
-      console.log('Found user:', user ? user.username : 'null');
-      
-      if (user) {
-        userType = 'user';
-      }
+      if (user) userType = 'user';
     }
 
     if (!user && (!role || role === 'provider')) {
-      const query = isEmail 
+      const query = isEmail
         ? { email: usernameOrEmail.toLowerCase() }
         : { username: usernameOrEmail };
-      
+
       provider = await Provider.findOne(query).select('+password');
-      if (provider) {
-        userType = 'provider';
-      }
+      if (provider) userType = 'provider';
     }
 
     if (!user && !provider) {
@@ -231,7 +221,6 @@ export const login = async (req, res, next) => {
       return errorResponse(res, 'Invalid credentials', HTTP_STATUS.UNAUTHORIZED);
     }
 
-    // Generate tokens
     let accessToken;
     let refreshToken;
     let responseData = {};
@@ -239,10 +228,11 @@ export const login = async (req, res, next) => {
     if (userType === 'user') {
       accessToken = generateAccessToken({ userId: user._id });
       refreshToken = generateRefreshToken({ userId: user._id });
-      
-      // Check if this user has a provider profile (onboarded as provider)
-      const providerProfile = await Provider.findOne({ userId: user._id });
-      
+
+      // Fetch full provider profile including capabilities and category
+      const providerProfile = await Provider.findOne({ userId: user._id })
+        .populate('categoryId', 'name slug iconName color');
+
       responseData = {
         userType: 'user',
         user: {
@@ -250,42 +240,60 @@ export const login = async (req, res, next) => {
           username: user.username,
           name: user.name,
           email: user.email,
-          searchRadiusKm: user.searchRadiusKm
+          searchRadiusKm: user.searchRadiusKm,
         },
-        hasProviderProfile: !!providerProfile,  // true if provider record exists
+        hasProviderProfile: !!providerProfile,
         providerProfile: providerProfile ? {
           id: providerProfile._id,
           businessName: providerProfile.name,
-          category: providerProfile.category,
+          phone: providerProfile.phone,
+          whatsapp: providerProfile.whatsapp,
           isActive: providerProfile.isActive,
-          isVerified: providerProfile.isVerified
+          isVerified: providerProfile.isVerified,
+          radiusKm: providerProfile.radiusKm,
+          category: providerProfile.categoryId?.name || null,
+          categorySlug: providerProfile.categoryId?.slug || null,
+          iconName: providerProfile.categoryId?.iconName || null,
+          color: providerProfile.categoryId?.color || null,
+          capabilities: {
+            canBeContacted: providerProfile.capabilities?.canBeContacted ?? true,
+            hasShowcase: providerProfile.capabilities?.hasShowcase ?? false,
+            hasShop: providerProfile.capabilities?.hasShop ?? false,
+            takesBookings: providerProfile.capabilities?.takesBookings ?? false,
+          },
         } : null,
         tokens: {
           accessToken,
           refreshToken,
-          expiresIn: TIME.JWT_EXPIRY
-        }
+          expiresIn: TIME.JWT_EXPIRY,
+        },
       };
     } else {
+      // Legacy direct provider login — keeping for backward compat
       accessToken = generateAccessToken({ providerId: provider._id });
       refreshToken = generateRefreshToken({ providerId: provider._id });
-      
+
       responseData = {
         userType: 'provider',
-        isProfileComplete: !!(provider.category && provider.location?.coordinates),
+        isProfileComplete: !!(provider.categoryId && provider.location?.coordinates),
         provider: {
           id: provider._id,
           name: provider.name,
           email: provider.email,
-          category: provider.category,
           isActive: provider.isActive,
-          isVerified: provider.isVerified
+          isVerified: provider.isVerified,
+          capabilities: {
+            canBeContacted: provider.capabilities?.canBeContacted ?? true,
+            hasShowcase: provider.capabilities?.hasShowcase ?? false,
+            hasShop: provider.capabilities?.hasShop ?? false,
+            takesBookings: provider.capabilities?.takesBookings ?? false,
+          },
         },
         tokens: {
           accessToken,
           refreshToken,
-          expiresIn: TIME.JWT_EXPIRY
-        }
+          expiresIn: TIME.JWT_EXPIRY,
+        },
       };
     }
 
@@ -294,7 +302,6 @@ export const login = async (req, res, next) => {
     next(error);
   }
 };
-
 /**
  * Register/Login with Google
  * POST /api/auth/google

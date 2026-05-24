@@ -4,15 +4,79 @@ import Category from '../models/Category.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { HTTP_STATUS } from '../utils/constants.js';
 
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+
 /**
- * Onboard existing user as a provider (like Google My Business)
+ * Safe provider shape for public responses (scan results, detail screen)
+ */
+const publicProviderShape = (p) => ({
+  id: p._id,
+  name: p.name,
+  phone: p.phone,
+  whatsapp: p.whatsapp,
+  description: p.description,
+  location: p.location,
+  locationAddress: p.locationAddress,
+  radiusKm: p.radiusKm,
+  distance: p.distance,
+  rating: p.rating,
+  totalRatings: p.totalRatings,
+  isVerified: p.isVerified,
+  isActive: p.isActive,
+  category: p.category,
+  capabilities: {
+    canBeContacted: p.capabilities?.canBeContacted ?? true,
+    hasShowcase: p.capabilities?.hasShowcase ?? false,
+    hasShop: p.capabilities?.hasShop ?? false,
+    takesBookings: p.capabilities?.takesBookings ?? false,
+  },
+});
+
+/**
+ * Safe provider shape for the owner (my profile responses)
+ */
+const ownerProviderShape = (p) => ({
+  id: p._id,
+  businessName: p.name,
+  phone: p.phone,
+  whatsapp: p.whatsapp,
+  email: p.email,
+  description: p.description,
+  locationAddress: p.locationAddress,
+  radiusKm: p.radiusKm,
+  isActive: p.isActive,
+  isVerified: p.isVerified,
+  rating: p.rating,
+  totalRatings: p.totalRatings,
+  totalScans: p.totalScans,
+  totalContacts: p.totalContacts,
+  priceRange: p.priceRange,
+  experience: p.experience,
+  tags: p.tags,
+  capabilities: {
+    canBeContacted: p.capabilities?.canBeContacted ?? true,
+    hasShowcase: p.capabilities?.hasShowcase ?? false,
+    hasShop: p.capabilities?.hasShop ?? false,
+    takesBookings: p.capabilities?.takesBookings ?? false,
+  },
+  categoryId: p.categoryId,
+  createdAt: p.createdAt,
+});
+
+// ─────────────────────────────────────────────────────────────
+// ONBOARDING
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Onboard existing user as a provider
  * POST /api/providers/onboard
  */
 export const onboardAsProvider = async (req, res, next) => {
   try {
     const userId = req.user._id;
 
-    // Check if user already has a provider profile
     const existingProvider = await Provider.findOne({ userId });
     if (existingProvider) {
       return errorResponse(res, 'You are already a provider', HTTP_STATUS.CONFLICT);
@@ -22,19 +86,22 @@ export const onboardAsProvider = async (req, res, next) => {
       businessName,
       phone,
       whatsapp,
-      categoryId,        // Now expecting ObjectId
+      categoryId,
       description,
       locationLng,
       locationLat,
       locationAddress,
-      radiusKm
+      radiusKm,
     } = req.body;
 
     if (!businessName || !phone || !categoryId || !locationLng || !locationLat) {
-      return errorResponse(res, 'Missing required fields: businessName, phone, categoryId, location', HTTP_STATUS.BAD_REQUEST);
+      return errorResponse(
+        res,
+        'Missing required fields: businessName, phone, categoryId, location',
+        HTTP_STATUS.BAD_REQUEST
+      );
     }
 
-    // Validate category exists
     const category = await Category.findById(categoryId);
     if (!category) {
       return errorResponse(res, 'Invalid category', HTTP_STATUS.BAD_REQUEST);
@@ -50,19 +117,21 @@ export const onboardAsProvider = async (req, res, next) => {
       profileImage: req.file?.path || null,
       location: {
         type: 'Point',
-        coordinates: [parseFloat(locationLng), parseFloat(locationLat)]
+        coordinates: [parseFloat(locationLng), parseFloat(locationLat)],
       },
       locationAddress: locationAddress || '',
       radiusKm: radiusKm || 5,
       isActive: true,
       isVerified: false,
-      totalScans: 0,
-      totalContacts: 0
+      capabilities: {
+        canBeContacted: true,
+        hasShowcase: false,
+        hasShop: false,
+        takesBookings: false,
+      },
     });
 
     await provider.save();
-
-    // Populate category for response
     await provider.populate('categoryId', 'name slug iconName color');
 
     return successResponse(res, {
@@ -70,96 +139,112 @@ export const onboardAsProvider = async (req, res, next) => {
       provider: {
         id: provider._id,
         businessName: provider.name,
+        phone: provider.phone,
+        isActive: provider.isActive,
+        isVerified: provider.isVerified,
+        radiusKm: provider.radiusKm,
         category: provider.categoryId.name,
         categorySlug: provider.categoryId.slug,
         iconName: provider.categoryId.iconName,
         color: provider.categoryId.color,
-        isActive: provider.isActive,
-        isVerified: provider.isVerified,
-        radiusKm: provider.radiusKm
-      }
+        capabilities: provider.capabilities,
+      },
     }, HTTP_STATUS.CREATED);
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * Get provider profile by ID (public)
- * GET /api/providers/:id
- */
-export const getProvider = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    
-    const provider = await Provider.findById(id);
-
-    if (!provider) {
-      return errorResponse(res, 'Provider not found', HTTP_STATUS.NOT_FOUND);
-    }
-
-    // Check if the requesting user owns this provider profile
-    const isOwner = req.user && provider.userId.toString() === req.user._id.toString();
-
-    successResponse(res, {
-      provider,
-      isOwner
-    });
-  } catch (error) {
-    next(error);
-  }
-};
+// ─────────────────────────────────────────────────────────────
+// PROFILE
+// ─────────────────────────────────────────────────────────────
 
 /**
- * Get current user's provider profile
+ * Get own provider profile
  * GET /api/providers/me
  */
 export const getMyProviderProfile = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    
-    const provider = await Provider.findOne({ userId });
+    const provider = await Provider.findOne({ userId }).populate('categoryId', 'name slug iconName color');
 
     if (!provider) {
-      return errorResponse(res, 'You are not a provider yet. Onboard first.', HTTP_STATUS.NOT_FOUND);
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
     }
 
-    successResponse(res, { provider });
+    return successResponse(res, { provider: ownerProviderShape(provider) });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Update provider profile
+ * Get public provider profile by ID
+ * GET /api/providers/:id
+ */
+export const getProvider = async (req, res, next) => {
+  try {
+    const provider = await Provider.findById(req.params.id)
+      .populate('categoryId', 'name slug iconName color');
+
+    if (!provider) {
+      return errorResponse(res, 'Provider not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    return successResponse(res, { provider: publicProviderShape(provider) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update own provider profile
  * PUT /api/providers/me
  */
 export const updateProvider = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    
-    const allowedUpdates = ['name', 'phone', 'whatsapp', 'description', 'radiusKm', 'priceRange', 'experience', 'tags'];
-    const updates = {};
-    
-    for (const key of allowedUpdates) {
-      if (req.body[key] !== undefined) {
-        updates[key] = req.body[key];
-      }
-    }
-
-    const provider = await Provider.findOneAndUpdate(
-      { userId },
-      updates,
-      { new: true, runValidators: true }
-    );
+    const provider = await Provider.findOne({ userId });
 
     if (!provider) {
       return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
     }
 
-    successResponse(res, {
-      message: 'Provider profile updated successfully',
-      provider
+    const {
+      businessName,
+      phone,
+      whatsapp,
+      description,
+      locationAddress,
+      radiusKm,
+      priceRange,
+      experience,
+      tags,
+      categoryId,
+    } = req.body;
+
+    // Only update fields that were sent
+    if (businessName) provider.name = businessName.trim();
+    if (phone) provider.phone = phone.trim();
+    if (whatsapp !== undefined) provider.whatsapp = whatsapp.trim();
+    if (description !== undefined) provider.description = description.trim();
+    if (locationAddress !== undefined) provider.locationAddress = locationAddress.trim();
+    if (radiusKm) provider.radiusKm = Math.min(50, Math.max(1, Number(radiusKm)));
+    if (priceRange) provider.priceRange = priceRange;
+    if (experience !== undefined) provider.experience = experience;
+    if (tags) provider.tags = tags;
+
+    if (categoryId) {
+      const category = await Category.findById(categoryId);
+      if (!category) return errorResponse(res, 'Invalid category', HTTP_STATUS.BAD_REQUEST);
+      provider.categoryId = category._id;
+    }
+
+    await provider.save();
+
+    return successResponse(res, {
+      message: 'Profile updated successfully',
+      provider: ownerProviderShape(provider),
     });
   } catch (error) {
     next(error);
@@ -167,15 +252,14 @@ export const updateProvider = async (req, res, next) => {
 };
 
 /**
- * Toggle provider availability
+ * Toggle provider active/inactive (Live toggle)
  * PATCH /api/providers/me/toggle
  */
 export const toggleAvailability = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    
     const provider = await Provider.findOne({ userId });
-    
+
     if (!provider) {
       return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
     }
@@ -183,9 +267,9 @@ export const toggleAvailability = async (req, res, next) => {
     provider.isActive = !provider.isActive;
     await provider.save();
 
-    successResponse(res, {
-      message: provider.isActive ? 'You are now accepting jobs' : 'You are now offline',
-      isActive: provider.isActive
+    return successResponse(res, {
+      message: `You are now ${provider.isActive ? 'live' : 'hidden'}`,
+      isActive: provider.isActive,
     });
   } catch (error) {
     next(error);
@@ -199,35 +283,251 @@ export const toggleAvailability = async (req, res, next) => {
 export const updateLocation = async (req, res, next) => {
   try {
     const userId = req.user._id;
-    const { lng, lat, address } = req.body;
+    const { locationLng, locationLat, locationAddress } = req.body;
 
-    if (lng === undefined || lat === undefined) {
-      return errorResponse(res, 'Longitude and latitude are required', HTTP_STATUS.BAD_REQUEST);
+    if (!locationLng || !locationLat) {
+      return errorResponse(res, 'locationLng and locationLat are required', HTTP_STATUS.BAD_REQUEST);
     }
 
     const provider = await Provider.findOne({ userId });
-    
     if (!provider) {
       return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
     }
 
     provider.location = {
       type: 'Point',
-      coordinates: [parseFloat(lng), parseFloat(lat)]
+      coordinates: [parseFloat(locationLng), parseFloat(locationLat)],
     };
-    provider.locationAddress = address || provider.locationAddress;
+    if (locationAddress) provider.locationAddress = locationAddress;
+
     await provider.save();
 
-    successResponse(res, {
-      message: 'Location updated successfully',
+    return successResponse(res, {
+      message: 'Location updated',
       location: provider.location,
-      locationAddress: provider.locationAddress
+      locationAddress: provider.locationAddress,
     });
   } catch (error) {
     next(error);
   }
 };
 
+// ─────────────────────────────────────────────────────────────
+// CAPABILITIES
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Update capabilities
+ * PATCH /api/providers/me/capabilities
+ */
+export const updateCapabilities = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const provider = await Provider.findOne({ userId });
+
+    if (!provider) {
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const { hasShowcase, hasShop, takesBookings } = req.body;
+
+    // canBeContacted is always true — never allow it to be turned off
+    if (hasShowcase !== undefined) provider.capabilities.hasShowcase = !!hasShowcase;
+    if (hasShop !== undefined) provider.capabilities.hasShop = !!hasShop;
+    if (takesBookings !== undefined) provider.capabilities.takesBookings = !!takesBookings;
+
+    await provider.save();
+
+    return successResponse(res, {
+      message: 'Capabilities updated',
+      capabilities: provider.capabilities,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// SHOWCASE — OWNER (manage)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Add showcase item
+ * POST /api/providers/me/showcase
+ */
+export const addShowcaseItem = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const provider = await Provider.findOne({ userId });
+
+    if (!provider) {
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    if (!provider.capabilities.hasShowcase) {
+      return errorResponse(res, 'Enable Showcase capability first', HTTP_STATUS.FORBIDDEN);
+    }
+
+    const { name, description, price, priceLabel, category, imageUrl } = req.body;
+
+    if (!name || price === undefined) {
+      return errorResponse(res, 'name and price are required', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    provider.showcaseItems.push({
+      name: name.trim(),
+      description: description?.trim(),
+      price: Number(price),
+      priceLabel: priceLabel?.trim(),
+      category: category?.trim(),
+      imageUrl,
+      isAvailable: true,
+    });
+
+    await provider.save();
+    const newItem = provider.showcaseItems[provider.showcaseItems.length - 1];
+
+    return successResponse(res, { message: 'Item added', item: newItem }, HTTP_STATUS.CREATED);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update showcase item
+ * PUT /api/providers/me/showcase/:itemId
+ */
+export const updateShowcaseItem = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const { itemId } = req.params;
+
+    const provider = await Provider.findOne({ userId });
+    if (!provider) {
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const item = provider.showcaseItems.id(itemId);
+    if (!item) {
+      return errorResponse(res, 'Item not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const { name, description, price, priceLabel, category, imageUrl, isAvailable } = req.body;
+
+    if (name !== undefined) item.name = name.trim();
+    if (description !== undefined) item.description = description.trim();
+    if (price !== undefined) item.price = Number(price);
+    if (priceLabel !== undefined) item.priceLabel = priceLabel.trim();
+    if (category !== undefined) item.category = category.trim();
+    if (imageUrl !== undefined) item.imageUrl = imageUrl;
+    if (isAvailable !== undefined) item.isAvailable = !!isAvailable;
+
+    await provider.save();
+
+    return successResponse(res, { message: 'Item updated', item });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete showcase item
+ * DELETE /api/providers/me/showcase/:itemId
+ */
+export const deleteShowcaseItem = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const { itemId } = req.params;
+
+    const provider = await Provider.findOne({ userId });
+    if (!provider) {
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const item = provider.showcaseItems.id(itemId);
+    if (!item) {
+      return errorResponse(res, 'Item not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    item.deleteOne();
+    await provider.save();
+
+    return successResponse(res, { message: 'Item removed' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Toggle showcase item availability
+ * PATCH /api/providers/me/showcase/:itemId/toggle
+ */
+export const toggleShowcaseItem = async (req, res, next) => {
+  try {
+    const userId = req.user._id;
+    const { itemId } = req.params;
+
+    const provider = await Provider.findOne({ userId });
+    if (!provider) {
+      return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const item = provider.showcaseItems.id(itemId);
+    if (!item) {
+      return errorResponse(res, 'Item not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    item.isAvailable = !item.isAvailable;
+    await provider.save();
+
+    return successResponse(res, {
+      message: `Item is now ${item.isAvailable ? 'available' : 'unavailable'}`,
+      isAvailable: item.isAvailable,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// SHOWCASE — PUBLIC (browse)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Get provider showcase items (public)
+ * GET /api/providers/:id/showcase
+ */
+export const getProviderShowcase = async (req, res, next) => {
+  try {
+    const provider = await Provider.findById(req.params.id).select('name showcaseItems capabilities isActive');
+
+    if (!provider) {
+      return errorResponse(res, 'Provider not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    if (!provider.capabilities?.hasShowcase) {
+      return errorResponse(res, 'This provider has no showcase', HTTP_STATUS.NOT_FOUND);
+    }
+
+    // Separate available and unavailable
+    const available = provider.showcaseItems.filter(i => i.isAvailable);
+    const unavailable = provider.showcaseItems.filter(i => !i.isAvailable);
+
+    return successResponse(res, {
+      providerName: provider.name,
+      isActive: provider.isActive,
+      totalItems: provider.showcaseItems.length,
+      available,
+      unavailable,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// ANALYTICS
+// ─────────────────────────────────────────────────────────────
 
 /**
  * Get provider analytics
@@ -242,26 +542,46 @@ export const getProviderAnalytics = async (req, res, next) => {
       return errorResponse(res, 'Provider profile not found', HTTP_STATUS.NOT_FOUND);
     }
 
-    const analytics = {
+    // Profile completeness
+    const completionChecks = [
+      !!provider.name,
+      !!provider.phone,
+      !!provider.whatsapp,
+      !!provider.description,
+      !!provider.categoryId,
+    ];
+    const completionPct = Math.round(
+      (completionChecks.filter(Boolean).length / completionChecks.length) * 100
+    );
+
+    // Conversion rate
+    const conversionRate = provider.totalScans > 0
+      ? ((provider.totalContacts / provider.totalScans) * 100).toFixed(1)
+      : 0;
+
+    // Recommendations
+    const recommendations = [];
+    if (!provider.description) recommendations.push('Add a description to get more contacts');
+    if (!provider.whatsapp) recommendations.push('Add WhatsApp to get 3x more contacts');
+    if (completionPct < 100) recommendations.push('Complete your profile to appear in more scans');
+    if (!provider.isVerified && provider.totalScans > 50) {
+      recommendations.push('Apply for verification to boost visibility');
+    }
+    if (!provider.capabilities.hasShowcase) {
+      recommendations.push('Enable Showcase to display what you offer');
+    }
+
+    return successResponse(res, {
       totalScans: provider.totalScans || 0,
       totalContacts: provider.totalContacts || 0,
       rating: provider.rating || 0,
+      totalRatings: provider.totalRatings || 0,
       isVerified: provider.isVerified,
-      conversionRate: provider.totalScans > 0 
-        ? ((provider.totalContacts / provider.totalScans) * 100).toFixed(1)
-        : 0,
-      recommendations: []
-    };
-
-    if (analytics.totalScans < 10) {
-      analytics.recommendations.push('Complete your profile to appear in more scans');
-    }
-    
-    if (!provider.isVerified && analytics.totalScans > 50) {
-      analytics.recommendations.push('Apply for verification to boost visibility');
-    }
-
-    successResponse(res, analytics);
+      conversionRate: Number(conversionRate),
+      completionPct,
+      showcaseItemCount: provider.showcaseItems?.length || 0,
+      recommendations,
+    });
   } catch (error) {
     next(error);
   }

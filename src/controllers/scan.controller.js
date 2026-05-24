@@ -1,9 +1,8 @@
 import Category from '../models/Category.js';
 import Provider from '../models/Provider.js';
-import { findNearbyProviders } from '../services/geo.service.js';  // ADD THIS IMPORT
+import { findNearbyProviders } from '../services/geo.service.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { HTTP_STATUS } from '../utils/constants.js';
-
 
 /**
  * Get category presence (which categories have providers nearby)
@@ -17,25 +16,23 @@ export const getCategoryPresence = async (req, res, next) => {
       return errorResponse(res, 'Location (lng, lat) are required', HTTP_STATUS.BAD_REQUEST);
     }
 
-    // Get all active categories from database
     const categories = await Category.find({ isActive: true }).sort({ name: 1 });
 
     if (!categories.length) {
       return errorResponse(res, 'No categories found', HTTP_STATUS.NOT_FOUND);
     }
 
-    // For each category, count active providers nearby using categoryId
     const presence = await Promise.all(categories.map(async (category) => {
       const count = await Provider.countDocuments({
-        categoryId: category._id,  // FIXED: Use ObjectId, not string slug
+        categoryId: category._id,
         isActive: true,
         location: {
           $geoWithin: {
-            $centerSphere: [[parseFloat(lng), parseFloat(lat)], parseFloat(radiusKm) / 6378.1]
-          }
-        }
+            $centerSphere: [[parseFloat(lng), parseFloat(lat)], parseFloat(radiusKm) / 6378.1],
+          },
+        },
       });
-      
+
       return {
         id: category._id,
         slug: category.slug,
@@ -43,15 +40,12 @@ export const getCategoryPresence = async (req, res, next) => {
         iconName: category.iconName,
         color: category.color,
         hasProviders: count > 0,
-        count: count
+        count,
       };
     }));
 
-    // Sort: categories with providers first, then by name
     presence.sort((a, b) => {
-      if (a.hasProviders === b.hasProviders) {
-        return a.name.localeCompare(b.name);
-      }
+      if (a.hasProviders === b.hasProviders) return a.name.localeCompare(b.name);
       return a.hasProviders ? -1 : 1;
     });
 
@@ -59,7 +53,7 @@ export const getCategoryPresence = async (req, res, next) => {
       location: { lng: parseFloat(lng), lat: parseFloat(lat) },
       radiusKm: parseFloat(radiusKm),
       categories: presence,
-      totalCategoriesWithProviders: presence.filter(c => c.hasProviders).length
+      totalCategoriesWithProviders: presence.filter(c => c.hasProviders).length,
     });
   } catch (error) {
     next(error);
@@ -67,11 +61,7 @@ export const getCategoryPresence = async (req, res, next) => {
 };
 
 /**
- * Scan for nearby providers (public)
- * GET /api/providers/scan
- */
-/**
- * Scan for providers nearby
+ * Scan for nearby providers
  * GET /api/scan/providers
  */
 export const scanProviders = async (req, res, next) => {
@@ -82,22 +72,19 @@ export const scanProviders = async (req, res, next) => {
       return errorResponse(res, 'Location (lng, lat) and category are required', HTTP_STATUS.BAD_REQUEST);
     }
 
-    // Validate category exists
     const validCategory = await Category.findOne({ slug: category, isActive: true });
     if (!validCategory) {
       return errorResponse(res, 'Invalid category', HTTP_STATUS.BAD_REQUEST);
     }
 
-    // Find nearby providers using geo service
     const providers = await findNearbyProviders({
       userLng: parseFloat(lng),
       userLat: parseFloat(lat),
       searchRadiusKm: parseFloat(radiusKm),
-      categorySlug: category,  // Pass the slug
-      limit: parseInt(limit)
+      categorySlug: category,
+      limit: parseInt(limit),
     });
 
-    // Increment scan counts for analytics
     if (providers.length > 0) {
       const providerIds = providers.map(p => p._id);
       await Provider.updateMany(
@@ -110,8 +97,8 @@ export const scanProviders = async (req, res, next) => {
       meta: {
         scanLocation: { lng: parseFloat(lng), lat: parseFloat(lat) },
         radiusKm: parseFloat(radiusKm),
-        category: category,
-        totalResults: providers.length
+        category,
+        totalResults: providers.length,
       },
       providers: providers.map(p => ({
         id: p._id,
@@ -121,11 +108,20 @@ export const scanProviders = async (req, res, next) => {
         description: p.description,
         location: p.location,
         locationAddress: p.locationAddress,
+        radiusKm: p.radiusKm,
         distance: p.distance,
         rating: p.rating,
         isVerified: p.isVerified,
-        category: p.category
-      }))
+        isActive: p.isActive,
+        category: p.category,
+        // Capabilities — drives showcase CTA on ProviderDetailScreen
+        capabilities: {
+          canBeContacted: p.capabilities?.canBeContacted ?? true,
+          hasShowcase: p.capabilities?.hasShowcase ?? false,
+          hasShop: p.capabilities?.hasShop ?? false,
+          takesBookings: p.capabilities?.takesBookings ?? false,
+        },
+      })),
     });
   } catch (error) {
     next(error);

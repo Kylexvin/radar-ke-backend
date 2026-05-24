@@ -17,7 +17,7 @@ router.get('/:id', getCategory);
 
 // Protected routes (require auth + admin role - you can add admin middleware later)
 router.post('/', authenticate, createCategory);
-router.post('/seed', authenticate, seedDefaultCategories);  // One-time seed
+
 router.put('/:id', authenticate, updateCategory);
 router.delete('/:id', authenticate, deleteCategory);
 
