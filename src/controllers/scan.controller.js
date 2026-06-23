@@ -116,11 +116,11 @@ export const scanProviders = async (req, res, next) => {
         category: p.category,
         // Capabilities — drives showcase CTA on ProviderDetailScreen
         capabilities: {
-          canBeContacted: p.capabilities?.canBeContacted ?? true,
-          hasShowcase: p.capabilities?.hasShowcase ?? false,
-          hasShop: p.capabilities?.hasShop ?? false,
-          takesBookings: p.capabilities?.takesBookings ?? false,
-        },
+  canBeContacted: true,
+  hasShowcase: false,  // temp: force showcase visible for testing
+  hasShop: true,      // temp: force shop visible for testing
+  takesBookings: false,
+},
       })),
     });
   } catch (error) {
